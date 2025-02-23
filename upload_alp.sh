@@ -39,9 +39,60 @@ verify_script_integrity() {
     fi
 }
 
+# Encryption functions
+generate_encryption_key() {
+    # Generate a secure random password for encryption
+    openssl rand -base64 32 > "/Users/charleskeely/Desktop/Decentralized Saves/.encryption_key"
+    chmod 600 "/Users/charleskeely/Desktop/Decentralized Saves/.encryption_key"
+}
+
+encrypt_file() {
+    local input_file="$1"
+    local output_file="$2"
+    local key_file="/Users/charleskeely/Desktop/Decentralized Saves/.encryption_key"
+    
+    # Use AES-256-CBC with password-based encryption
+    openssl enc -aes-256-cbc -salt \
+        -in "$input_file" \
+        -out "$output_file" \
+        -pass file:"$key_file" \
+        -pbkdf2 \
+        -iter 100000 || {
+            echo "❌ Encryption failed!"
+            return 1
+        }
+    
+    return 0
+}
+
+decrypt_file() {
+    local input_file="$1"
+    local output_file="$2"
+    local key_file="/Users/charleskeely/Desktop/Decentralized Saves/.encryption_key"
+    
+    # Decrypt using the same parameters
+    openssl enc -aes-256-cbc -d -salt \
+        -in "$input_file" \
+        -out "$output_file" \
+        -pass file:"$key_file" \
+        -pbkdf2 \
+        -iter 100000 || {
+            echo "❌ Decryption failed!"
+            return 1
+        }
+    
+    return 0
+}
+
 # Run security checks first
 check_permissions
 verify_script_integrity
+
+# Ensure encryption key exists
+if [[ ! -f "/Users/charleskeely/Desktop/Decentralized Saves/.encryption_key" ]]; then
+    echo "🔑 Generating new encryption key..."
+    generate_encryption_key
+fi
 
 # Clear the error log before running the script
 > "/Users/charleskeely/Desktop/Decentralized Saves/script_error.log"
@@ -123,43 +174,47 @@ if [[ -n "$latest_file" ]]; then
     
     echo "📊 Original file size: $original_size bytes"
     echo "🔑 Original file hash: $original_hash"
-    # Log both original and versioned filename with the hash
-    # Calculate version number first
+
+    # Calculate version number and log hash first
     version=1
     while [[ -f "${project_name}_v${version}.alp" ]] || grep -q "${project_name}_v${version}.alp" "$LOG_FILE"; do
         ((version++))
     done
     versioned_name="${project_name}_v${version}.alp"
     
-    # Log with correct version number
+    # Log hash information first
     echo "$(date '+%Y-%m-%d %H:%M:%S') | Original: $latest_file | Versioned: $versioned_name | Hash: $original_hash | Size: $original_size bytes" >> "$HASH_LOG"
 
-    # Sync updated hash log with GitHub
+    # Sync with GitHub early
     sync_with_github
 
-    # Version handling - simplified
-    version=1
-    while [[ -f "${project_name}_v${version}.alp" ]] || grep -q "${project_name}_v${version}.alp" "$LOG_FILE"; do
-        ((version++))
-    done
-    versioned_name="${project_name}_v${version}.alp"
-
-    # Create a copy with versioned name
+    # Create the versioned file
     cp "$latest_file" "$versioned_name"
-
-    echo "📂 Uploading $versioned_name to Web3.Storage..."
-
-    # Upload and capture full output
-    upload_output=$(/opt/homebrew/bin/w3 up --no-wrap "$versioned_name" 2>&1)
+    
+    # Create encrypted version
+    encrypted_name="${versioned_name}.enc"
+    echo "🔒 Encrypting file..."
+    
+    if ! encrypt_file "$versioned_name" "$encrypted_name"; then
+        echo "❌ Encryption failed!"
+        rm -f "$versioned_name"
+        exit 1
+    fi
+    
+    echo "📂 Uploading encrypted file to Web3.Storage..."
+    
+    # Upload encrypted file and capture full output
+    upload_output=$(/opt/homebrew/bin/w3 up --no-wrap "$encrypted_name" 2>&1)
     
     # Check if upload was successful
     if [[ $? -ne 0 ]]; then
         echo "❌ Upload failed with error:"
         echo "$upload_output"
+        rm -f "$versioned_name" "$encrypted_name"
         exit 1
     fi
 
-    # Extract CID - using the full URL and then extracting the last part
+    # Extract CID
     cid=$(echo "$upload_output" | grep 'https://w3s.link/ipfs/' | sed 's|.*/||')
     
     if [[ -n "$cid" ]]; then
@@ -168,38 +223,44 @@ if [[ -n "$latest_file" ]]; then
         # Store both CID and w3s.link URL in log
         echo "$versioned_name https://w3s.link/ipfs/$cid" >> "$LOG_FILE"
         
-        # Try to retrieve using w3 get
-        echo "📥 Attempting to retrieve file using w3 get..."
+        # Verify the uploaded file
+        echo "📥 Verifying uploaded file..."
         temp_dir="/tmp/alp_verify"
         mkdir -p "$temp_dir"
-        temp_downloaded_file="${temp_dir}/${versioned_name}"
+        temp_encrypted_file="${temp_dir}/${encrypted_name}"
+        temp_decrypted_file="${temp_dir}/${versioned_name}"
         
         # Try both w3 get with CID and direct download as fallback
-        if /opt/homebrew/bin/w3 get "$cid" > "$temp_downloaded_file" 2>/dev/null || \
+        if /opt/homebrew/bin/w3 get "$cid" > "$temp_encrypted_file" 2>/dev/null || \
            curl -L --max-time 60 --retry 3 --retry-delay 10 \
            -H "Accept: application/octet-stream" \
-           "https://w3s.link/ipfs/$cid" > "$temp_downloaded_file"; then
+           "https://w3s.link/ipfs/$cid" > "$temp_encrypted_file"; then
             
-            # Verify downloaded file
-            downloaded_size=$(get_file_size "$temp_downloaded_file")
-            downloaded_hash=$(shasum -a 256 "$temp_downloaded_file" | awk '{print $1}')
-            
-            echo "📊 Downloaded file size: $downloaded_size bytes"
-            echo "🔑 Downloaded file hash: $downloaded_hash"
-            
-            if [[ "$original_size" == "$downloaded_size" ]]; then
-                if [[ "$original_hash" == "$downloaded_hash" ]]; then
-                    echo "✅ File verified successfully!"
+            # Decrypt and verify the downloaded file
+            if decrypt_file "$temp_encrypted_file" "$temp_decrypted_file"; then
+                # Verify decrypted file
+                downloaded_hash=$(shasum -a 256 "$temp_decrypted_file" | awk '{print $1}')
+                
+                echo "📊 Downloaded file size: $(get_file_size "$temp_decrypted_file") bytes"
+                echo "🔑 Downloaded file hash: $downloaded_hash"
+                
+                if [[ "$original_size" == "$(get_file_size "$temp_decrypted_file")" ]]; then
+                    if [[ "$original_hash" == "$downloaded_hash" ]]; then
+                        echo "✅ File verified successfully!"
+                    else
+                        echo "❌ Hash verification failed!"
+                        echo "Original hash: $original_hash"
+                        echo "Downloaded hash: $downloaded_hash"
+                        exit 1
+                    fi
                 else
-                    echo "❌ Hash verification failed!"
-                    echo "Original hash: $original_hash"
-                    echo "Downloaded hash: $downloaded_hash"
+                    echo "❌ Size mismatch!"
+                    echo "Original size: $original_size bytes"
+                    echo "Downloaded size: $(get_file_size "$temp_decrypted_file") bytes"
                     exit 1
                 fi
             else
-                echo "❌ Size mismatch!"
-                echo "Original size: $original_size bytes"
-                echo "Downloaded size: $downloaded_size bytes"
+                echo "❌ Decryption verification failed!"
                 exit 1
             fi
         else
@@ -208,12 +269,13 @@ if [[ -n "$latest_file" ]]; then
         fi
         
         # Cleanup
-        rm -f "$versioned_name"
+        rm -f "$versioned_name" "$encrypted_name"
         rm -rf "$temp_dir"
     else
         echo "❌ Failed to extract CID from upload output!"
         echo "Upload output was:"
         echo "$upload_output"
+        rm -f "$versioned_name" "$encrypted_name"
         exit 1
     fi
 else
