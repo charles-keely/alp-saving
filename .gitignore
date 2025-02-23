@@ -4,3 +4,6 @@ Blockchain Music Saves/
 script_error.log
 upload_log.txt
 file_hashes.log
+node_modules/
+.DS_Store 
+*.alp
