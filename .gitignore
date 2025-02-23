@@ -1,2 +1,6 @@
 Blockchain Music Saves/
 .env
+.script_hash
+script_error.log
+upload_log.txt
+file_hashes.log
