@@ -1,5 +1,48 @@
 #!/bin/bash
 
+# Check file permissions on script and working directories
+check_permissions() {
+    local dirs=(
+        "/Users/charleskeely/Desktop/Decentralized Saves"
+        "/Users/charleskeely/Desktop/Decentralized Saves/Blockchain Music Saves"
+    )
+    
+    for dir in "${dirs[@]}"; do
+        if [[ "$(stat -f %Op "$dir")" != "700" ]]; then
+            echo "⚠️ Warning: Directory $dir has loose permissions. Fixing..."
+            chmod 700 "$dir"
+        fi
+    done
+    
+    # Check script permissions
+    if [[ "$(stat -f %Op "$0")" != "700" ]]; then
+        echo "⚠️ Warning: Script has loose permissions. Fixing..."
+        chmod 700 "$0"
+    fi
+}
+
+# Check for suspicious file changes
+verify_script_integrity() {
+    local script_hash
+    script_hash=$(shasum -a 256 "$0" | awk '{print $1}')
+    
+    local hash_file="/Users/charleskeely/Desktop/Decentralized Saves/.script_hash"
+    
+    if [[ ! -f "$hash_file" ]]; then
+        echo "$script_hash" > "$hash_file"
+        chmod 600 "$hash_file"
+    else
+        if [[ "$(cat "$hash_file")" != "$script_hash" ]]; then
+            echo "🚨 Warning: Script file has been modified!"
+            exit 1
+        fi
+    fi
+}
+
+# Run security checks first
+check_permissions
+verify_script_integrity
+
 # Clear the error log before running the script
 > "/Users/charleskeely/Desktop/Decentralized Saves/script_error.log"
 
