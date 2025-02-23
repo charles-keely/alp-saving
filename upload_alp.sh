@@ -37,9 +37,38 @@ SPACE_KEY="$web3key"
 LOG_FILE="/Users/charleskeely/Desktop/Decentralized Saves/upload_log.txt"
 HASH_LOG="/Users/charleskeely/Desktop/Decentralized Saves/file_hashes.log"
 
+# GitHub repository details
+GITHUB_REPO="git@github.com:charles-keely/alp-hashes.git"
+GITHUB_DIR="/Users/charleskeely/Desktop/Decentralized Saves/alp-hashes"
+
 # Function to get file size in bytes
 get_file_size() {
     stat -f %z "$1"
+}
+
+# Function to sync hash log with GitHub
+sync_with_github() {
+    # Check if GitHub directory exists
+    if [ ! -d "$GITHUB_DIR" ]; then
+        echo "📦 Cloning GitHub repository..."
+        git clone "$GITHUB_REPO" "$GITHUB_DIR"
+    fi
+
+    # Copy the updated hash log to GitHub directory
+    cp "$HASH_LOG" "$GITHUB_DIR/file_hashes.log"
+
+    # Navigate to GitHub directory
+    cd "$GITHUB_DIR" || { echo "❌ Failed to navigate to GitHub directory!"; exit 1; }
+
+    # Add, commit, and push changes
+    git add file_hashes.log
+    git commit -m "Update file hashes: $(date '+%Y-%m-%d %H:%M:%S')"
+    git push origin main
+
+    echo "✅ Successfully synced hash log with GitHub"
+
+    # Return to original directory
+    cd - || { echo "❌ Failed to return to original directory!"; exit 1; }
 }
 
 if [[ -n "$latest_file" ]]; then
@@ -51,7 +80,19 @@ if [[ -n "$latest_file" ]]; then
     
     echo "📊 Original file size: $original_size bytes"
     echo "🔑 Original file hash: $original_hash"
-    echo "$latest_file $original_hash $original_size" >> "$HASH_LOG"
+    # Log both original and versioned filename with the hash
+    # Calculate version number first
+    version=1
+    while [[ -f "${project_name}_v${version}.alp" ]] || grep -q "${project_name}_v${version}.alp" "$LOG_FILE"; do
+        ((version++))
+    done
+    versioned_name="${project_name}_v${version}.alp"
+    
+    # Log with correct version number
+    echo "$(date '+%Y-%m-%d %H:%M:%S') | Original: $latest_file | Versioned: $versioned_name | Hash: $original_hash | Size: $original_size bytes" >> "$HASH_LOG"
+
+    # Sync updated hash log with GitHub
+    sync_with_github
 
     # Version handling - simplified
     version=1
