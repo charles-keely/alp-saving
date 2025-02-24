@@ -6,6 +6,20 @@
 GLOBAL_TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
 
 # ------------------------------------------------
+# Email Alert Function
+# ------------------------------------------------
+EMAIL="charles.daze@icloud.com"
+SUBJECT="Alert: upload_alp.sh Script Failure"
+MESSAGE="/tmp/upload_alp_failure_message.txt"
+
+send_email_alert() {
+    echo "Subject: $SUBJECT" > $MESSAGE
+    echo "$1" >> $MESSAGE
+    mail -s "$SUBJECT" "$EMAIL" < $MESSAGE
+    rm $MESSAGE
+}
+
+# ------------------------------------------------
 # 1) SECURITY CHECKS
 # ------------------------------------------------
 
@@ -20,6 +34,7 @@ check_permissions() {
         local actual_perm
         actual_perm=$(stat -c %a "$dir" 2>/dev/null) || {
             echo "❌ Directory $dir not found!"
+            send_email_alert "Directory $dir not found!"
             exit 1
         }
         if [[ "$actual_perm" != "700" ]]; then
@@ -52,6 +67,7 @@ verify_script_integrity() {
         # Compare stored hash to current
         if [[ "$(cat "$hash_file")" != "$script_hash" ]]; then
             echo "🚨 Warning: Script file has been modified illegally!"
+            send_email_alert "Script file has been modified illegally!"
             exit 1
         fi
     fi
@@ -78,6 +94,7 @@ encrypt_file() {
         -pbkdf2 \
         -iter 100000 || {
             echo "❌ Encryption failed!"
+            send_email_alert "Encryption failed for file $input_file"
             return 1
         }
     return 0
@@ -95,6 +112,7 @@ decrypt_file() {
         -pbkdf2 \
         -iter 100000 || {
             echo "❌ Decryption failed!"
+            send_email_alert "Decryption failed for file $input_file"
             return 1
         }
     return 0
@@ -228,6 +246,7 @@ upload_output=$($W3_CLI up --no-wrap "$encrypted_name" 2>&1)
 if [[ $? -ne 0 ]]; then
     echo "❌ Upload failed with error:"
     echo "$upload_output"
+    send_email_alert "Upload failed with error: $upload_output"
     rm -f "$versioned_name" "$encrypted_name"
     exit 1
 fi
@@ -237,6 +256,7 @@ cid=$(echo "$upload_output" | grep 'https://w3s.link/ipfs/' | sed 's|.*/||')
 if [[ -z "$cid" ]]; then
     echo "❌ Failed to extract CID from upload output!"
     echo "$upload_output"
+    send_email_alert "Failed to extract CID from upload output: $upload_output"
     rm -f "$versioned_name" "$encrypted_name"
     exit 1
 fi
