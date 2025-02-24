@@ -1,0 +1,17 @@
+[Unit]
+Description=Automatically upload .alp files via upload_alp.sh
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+ExecStart=/home/ubuntu/Decentralized_Saves/upload_alp.sh
+# Make it harder to kill (won't respond to normal stop attempts)
+KillMode=none
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
