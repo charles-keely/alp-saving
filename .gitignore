@@ -8,3 +8,4 @@ node_modules/
 .DS_Store 
 *.alp
 .encryption_key
+ssh-key-2025-02-24.key

@@ -1,5 +1,14 @@
 #!/bin/bash
 
+# ------------------------------------------------
+# Single timestamp for ALL logs in this run
+# ------------------------------------------------
+GLOBAL_TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
+
+# ------------------------------------------------
+# 1) SECURITY CHECKS
+# ------------------------------------------------
+
 # Check file permissions on script and working directories
 check_permissions() {
     local dirs=(
@@ -37,6 +46,9 @@ verify_script_integrity() {
             exit 1
         fi
     fi
+    
+    # Log the script hash with the global timestamp
+    echo "$GLOBAL_TIMESTAMP | Script Hash: $script_hash" >> "/Users/charleskeely/Desktop/Decentralized Saves/script_hashes.log"
 }
 
 # Encryption functions
@@ -84,6 +96,41 @@ decrypt_file() {
     return 0
 }
 
+# ------------------------------------------------
+# 2) FILE PROCESSING AND UPLOADING WILL FOLLOW
+# ------------------------------------------------
+
+# Function to sync logs with GitHub (called only once at the end)
+sync_with_github() {
+    # Check if GitHub directory exists
+    if [ ! -d "$GITHUB_DIR" ]; then
+        echo "📦 Cloning GitHub repository..."
+        git clone "$GITHUB_REPO" "$GITHUB_DIR"
+    fi
+
+    # Copy all log files to GitHub directory
+    cp "$HASH_LOG" "$GITHUB_DIR/file_hashes.log"
+    cp "/Users/charleskeely/Desktop/Decentralized Saves/script_hashes.log" "$GITHUB_DIR/script_hashes.log"
+    cp "/Users/charleskeely/Desktop/Decentralized Saves/cid_log.txt" "$GITHUB_DIR/cid_log.txt"
+
+    # Navigate to GitHub directory
+    cd "$GITHUB_DIR" || { echo "❌ Failed to navigate to GitHub directory!"; exit 1; }
+
+    # Add, commit, and push changes
+    git add file_hashes.log script_hashes.log cid_log.txt
+    git commit -m "Update hashes: $GLOBAL_TIMESTAMP"
+    git push origin main
+
+    echo "✅ Successfully synced hash logs with GitHub"
+
+    # Return to original directory
+    cd - || { echo "❌ Failed to return to original directory!"; exit 1; }
+}
+
+# ------------------------------------------------
+# SCRIPT EXECUTION STARTS HERE
+# ------------------------------------------------
+
 # Run security checks first
 check_permissions
 verify_script_integrity
@@ -118,11 +165,13 @@ if [[ -z "$web3key" ]]; then
     exit 1
 fi
 
+echo "web3key: $web3key"
+
 # Navigate to the directory containing your .alp files
 cd "/Users/charleskeely/Desktop/Decentralized Saves/Blockchain Music Saves/" || { echo "❌ Directory not found!"; exit 1; }
 
 # Find the most recent .alp file
-latest_file=$(ls -t *.alp | head -n 1)
+latest_file=$(ls -t *.alp 2>/dev/null | head -n 1)
 
 # Space Key for "ableton-alp-files"
 SPACE_KEY="$web3key"
@@ -140,31 +189,6 @@ get_file_size() {
     stat -f %z "$1"
 }
 
-# Function to sync hash log with GitHub
-sync_with_github() {
-    # Check if GitHub directory exists
-    if [ ! -d "$GITHUB_DIR" ]; then
-        echo "📦 Cloning GitHub repository..."
-        git clone "$GITHUB_REPO" "$GITHUB_DIR"
-    fi
-
-    # Copy the updated hash log to GitHub directory
-    cp "$HASH_LOG" "$GITHUB_DIR/file_hashes.log"
-
-    # Navigate to GitHub directory
-    cd "$GITHUB_DIR" || { echo "❌ Failed to navigate to GitHub directory!"; exit 1; }
-
-    # Add, commit, and push changes
-    git add file_hashes.log
-    git commit -m "Update file hashes: $(date '+%Y-%m-%d %H:%M:%S')"
-    git push origin main
-
-    echo "✅ Successfully synced hash log with GitHub"
-
-    # Return to original directory
-    cd - || { echo "❌ Failed to return to original directory!"; exit 1; }
-}
-
 if [[ -n "$latest_file" ]]; then
     project_name=$(basename "$latest_file" .alp)
     
@@ -175,18 +199,15 @@ if [[ -n "$latest_file" ]]; then
     echo "📊 Original file size: $original_size bytes"
     echo "🔑 Original file hash: $original_hash"
 
-    # Calculate version number and log hash first
+    # Calculate version number and log hash
     version=1
     while [[ -f "${project_name}_v${version}.alp" ]] || grep -q "${project_name}_v${version}.alp" "$LOG_FILE"; do
         ((version++))
     done
     versioned_name="${project_name}_v${version}.alp"
     
-    # Log hash information first
-    echo "$(date '+%Y-%m-%d %H:%M:%S') | Original: $latest_file | Versioned: $versioned_name | Hash: $original_hash | Size: $original_size bytes" >> "$HASH_LOG"
-
-    # Sync with GitHub early
-    sync_with_github
+    # Log the file hash information using the GLOBAL_TIMESTAMP
+    echo "$GLOBAL_TIMESTAMP | Original: $latest_file | Versioned: $versioned_name | Hash: $original_hash | Size: $original_size bytes" >> "$HASH_LOG"
 
     # Create the versioned file
     cp "$latest_file" "$versioned_name"
@@ -220,7 +241,10 @@ if [[ -n "$latest_file" ]]; then
     if [[ -n "$cid" ]]; then
         echo "✅ Upload successful! CID: $cid"
         
-        # Store both CID and w3s.link URL in log
+        # Log CID with the GLOBAL_TIMESTAMP
+        echo "$GLOBAL_TIMESTAMP | File: $versioned_name | CID: $cid" >> "/Users/charleskeely/Desktop/Decentralized Saves/cid_log.txt"
+        
+        # Store versioned file + CID in upload_log
         echo "$versioned_name https://w3s.link/ipfs/$cid" >> "$LOG_FILE"
         
         # Verify the uploaded file
@@ -278,6 +302,12 @@ if [[ -n "$latest_file" ]]; then
         rm -f "$versioned_name" "$encrypted_name"
         exit 1
     fi
+    
+    # ------------------------------------------------
+    # 4) SINGLE GITHUB SYNC AT THE VERY END
+    # ------------------------------------------------
+    sync_with_github
+
 else
     echo "❌ No .alp files found."
     exit 1
